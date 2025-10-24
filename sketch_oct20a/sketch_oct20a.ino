@@ -22,13 +22,27 @@ MagneticSensorSPI sensor = MagneticSensorSPI(AS5048_SPI, PIN_SPI_CS);
 
 //Target Variable
 float target_velocity = 0;
-float target_angle = 0;
+float target_angle = 3.14;
 uint32_t timer = 0;
 bool check = true;
 
+float kp = 20;
+float ki = 0.1;
+float kd = 0.1;
+
+float kpv = 0.5;
+float kiv = 0.1;
+
 //Serial Command Setting
 Commander command = Commander(Serial);
-void doTarget(char* cmd) { command.scalar(&target_velocity, cmd); }
+void doTarget(char* cmd) { command.scalar(&target_angle, cmd); }
+
+void doTargetp(char* cmd) { command.scalar(&kp, cmd);  motor.P_angle.P = kp;}
+void doTargeti(char* cmd) { command.scalar(&ki, cmd); motor.P_angle.I = ki;}
+void doTargetd(char* cmd) { command.scalar(&kd, cmd); motor.P_angle.D = kd;}
+
+void doTargetpv(char* cmd) { command.scalar(&kpv, cmd); motor.PID_velocity.P = kpv;}
+void doTargetiv(char* cmd) { command.scalar(&kiv, cmd); motor.PID_velocity.I = kiv;}
 
 static inline float wrap_0_2pi(float a) {
   a = fmodf(a, _2PI);
@@ -48,7 +62,7 @@ void setup() {
   motor.linkSensor(&sensor);
 
   //Supply Voltage Setting [V]
-  driver.voltage_power_supply = 15;                   //According to the supply voltage, modify the value of voltage_power_supply here
+  driver.voltage_power_supply = 20;                   //According to the supply voltage, modify the value of voltage_power_supply here
   driver.init();
 
   //Connect the Motor and Driver Objects
@@ -60,14 +74,14 @@ void setup() {
   motor.controller = MotionControlType::angle;
 
   //Speed PID Setting                                     
-  motor.PID_velocity.P = 0.1;             //According to the selected motor, modify the PID parameters here to achieve better results
-  motor.PID_velocity.I = 0.1;
+  motor.PID_velocity.P = kpv;             //According to the selected motor, modify the PID parameters here to achieve better results
+  motor.PID_velocity.I = kiv;
   //Angle PID Setting 
-  motor.P_angle.P = 15;
-  motor.P_angle.D = 0.1;
-  motor.P_angle.I = 0.01;
+  motor.P_angle.P = kp;
+  motor.P_angle.D = kd;
+  motor.P_angle.I = ki;
   //Motor Maximum Limit Voltage
-  motor.voltage_limit = 10;                //According to the supply voltage, modify the value of voltage_limit here
+  motor.voltage_limit = 15;                //According to the supply voltage, modify the value of voltage_limit here
   
   //Speed Low-pass Filter Time Constant
   motor.LPF_velocity.Tf = 0.01;
@@ -81,22 +95,42 @@ void setup() {
   
   //Initialize the Motor
   motor.init();
-  command.add('T', doTarget, "target velocity");
+  command.add('T', doTarget, "target angle");
+  
+  command.add('P', doTargetp, "target P");
+  command.add('I', doTargeti, "target I");
+  command.add('D', doTargetd, "target D");
+
+  command.add('PV', doTargetp, "target PV");
+  command.add('IV', doTargeti, "target IV");
   //Initialize FOC
   motor.sensor_direction = Direction::CCW;
   motor.initFOC();
   Serial.println(F("Motor ready."));
   Serial.println(F("Set the target velocity using serial terminal:"));
-  
+  motor.move(target_angle);
 }
+
+const float angle_dead_zone = 30 * PI / 180.0;
 
 void loop() {
 
-  float a = wrap_0_2pi(sensor.getAngle());
-  Serial.println(a, 4);
+  // float a = wrap_0_2pi(sensor.getAngle());
+  //Serial.println(a, 4);
   motor.loopFOC();
 
-  motor.move(target_velocity);
+  float error = fabs(wrap_0_2pi(target_angle) - wrap_0_2pi(motor.shaft_angle));
+   Serial.println(error * RAD_TO_DEG);
+  if (error < angle_dead_zone) {
+    //Serial.println(a, 4);
+    motor.controller = MotionControlType::angle;
+    motor.move(wrap_0_2pi(target_angle));
+  }
+  else {
+      motor.controller = MotionControlType::torque;
+      motor.move(0);
+  }
+
   
   command.run();
 
