@@ -8,6 +8,20 @@
 #include <SimpleFOC.h>
 #include <SPI.h>
 
+/* DEFINE LINE ----------------------------------------- */
+#define PID_P 140
+#define PID_I 0.1
+#define PID_D 0.1
+#define FOC_PID_OUTPUT_RAMP 10000
+#define FOC_PID_LIMIT 15
+
+#define FOC_VOLTAGE_POWER_SUPPLY  20
+#define FOC_VOLTAGE_LIMIT 18
+#define INVERT_ROTATION   1
+
+#define DEAD_ZONE_REG   0.25f
+/* ----------------------------------------------------- */
+
 BLDCMotor motor = BLDCMotor(7);         //According to the selected motor, modify the value in BLDCMotor()
 BLDCDriver3PWM driver = BLDCDriver3PWM(32, 33, 25, 22);
 
@@ -27,7 +41,7 @@ float target_angle2 = 3.14;
 uint32_t timer = 0;
 bool check = false;
 
-float kp = 140;
+float kp = 700;
 float ki = 0.005;
 float kd = 0.004;
 
@@ -50,6 +64,11 @@ static inline float wrap_0_2pi(float a) {
   if (a < 0) a += _2PI;
   return a;
 }
+
+float torque_T = 0;
+bool one_time = true;
+float min_position = 0;
+float max_position = 0;
 
 float deg2rad(float deg);
 
@@ -114,7 +133,64 @@ void setup() {
   motor.loopFOC();
   target_angle = motor.shaft_angle;
   target_angle2 = motor.shaft_angle + 1;
-  motor.move(target_angle);
+  //motor.move(target_angle);
+  float old_angle = motor.shaft_angle;
+  int countt = 0;
+  while(1){
+    for(int i = 0 ; i < 40; i++){
+      motor.loopFOC();
+      motor.move(7);
+      delay(1);
+    }
+    //Serial.println((motor.shaft_angle - old_angle)*RAD_TO_DEG);
+    if(fabs(motor.shaft_angle - old_angle) < 0.5*DEG_TO_RAD){
+      countt++;
+      if(countt > 20){
+        max_position = motor.shaft_angle;
+        //Serial.println(motor.shaft_angle * RAD_TO_DEG);
+        break;
+      }
+
+    }
+    old_angle = motor.shaft_angle; 
+  }
+  countt = 0;
+  while(1){
+    for(int i = 0 ; i < 40; i++){
+      motor.loopFOC();
+      motor.move(-7);
+      delay(1);
+    }
+    //Serial.println((motor.shaft_angle - old_angle)*RAD_TO_DEG);
+    if(fabs(motor.shaft_angle - old_angle) < 0.5*DEG_TO_RAD){
+      countt++;
+      if(countt > 20){
+        min_position = motor.shaft_angle;
+        //Serial.println(motor.shaft_angle * RAD_TO_DEG);
+        break;
+      }
+    }
+    old_angle = motor.shaft_angle; 
+  }
+  target_angle = (max_position + min_position)/2;
+  int count = 0;
+  while(1){
+    motor.loopFOC();
+    float angle = motor.shaft_angle;
+    float vec = motor.shaft_velocity;
+    float error =  angle - target_angle;
+    torque_T = - (error * PID_P + PID_D * vec);
+    if (fabs(torque_T) > 6) {
+      torque_T = torque_T > 0 ? 6 : -6;
+    }
+    motor.move(torque_T);
+    if(fabs(error*RAD_TO_DEG) < 1.5){count++;}
+    if(count > 50) {break;}
+    Serial.print(torque_T);Serial.print(" - ");Serial.println(error*RAD_TO_DEG);
+    delay(1);
+  }
+
+  torque_T = 0;  
 }
 
 float angle_dead_zone = 4 * PI / 180.0;
@@ -166,79 +242,29 @@ void loop() {
   
   command.run();
 
-  // float error = -target_angle + motor.shaft_angle;
-  // float error2 = -target_angle2 + motor.shaft_angle;
-  // float vec = motor.shaft_velocity;
+  float error = -target_angle + motor.shaft_angle;
+  float error2 = -target_angle2 + motor.shaft_angle;
+  float vec = motor.shaft_velocity;
    
-  // if (fabs(error) < angle_dead_zone) {
-  //   angle_dead_zone  = 7 * PI / 180.0;
-  //   motor.controller = MotionControlType::angle;
-  //   motor.move(target_angle);
-  //   Serial.println(motor.voltage.q);
-  //   // angle_dead_zone  = 7 * PI / 180.0;
-  //   // float torque_T = - kp * error  - kd * vec;
-  //   // motor.move(torque_T);
-  //   // Serial.println(error*RAD_TO_DEG);
-  // }
-  // // else if(fabs(error2) < angle_dead_zone2 && check){
-  // //   motor.controller = MotionControlType::torque;
-  // //   float torque_T = - 50 * error2  - kd * vec;
-  // //   motor.move(torque_T);
-  // //   Serial.println(error*RAD_TO_DEG);    
-  // // }
-  // else {
-  //     angle_dead_zone = 1 * PI / 180.0;
-  //     check = false;
-  //     //Serial.println(motor.shaft_velocity);    
-  //     if(fabs(motor.shaft_velocity) < 0.05 ){
-  //       start_time++;        
-  //     }
-  //     if(start_time > 500){
-  //       target_angle2 = motor.shaft_angle;
-  //       check = true;
-  //       start_time = 0;
-  //     }
-  //     motor.controller = MotionControlType::torque;
-  //     motor.move(0);
-  // }
-
-  float error = fabs(target_angle - motor.shaft_angle);
-  float error2 = fabs(target_angle2 - motor.shaft_angle);
-  float required_torque_input = motor.voltage.q;
-   
-  if (error < angle_dead_zone) {
+  if (fabs(error) < angle_dead_zone) {
     angle_dead_zone  = 7 * PI / 180.0;
-    if(ot){
-    motor.move(12);
-    motor.loopFOC();
-    delayMicroseconds(500);
-    motor.move(10);
-    motor.loopFOC();
-    delayMicroseconds(500);
-    motor.P_angle.P = kp;
-    motor.P_angle.reset();
-    motor.PID_velocity.reset();
-    //Serial.println(a, 4);
     motor.controller = MotionControlType::angle;
-    ot = false;
-    }
     motor.move(target_angle);
-    Serial.println(error*RAD_TO_DEG);
+    float a = motor.P_angle(error);
+    Serial.println(a);
+    // angle_dead_zone  = 7 * PI / 180.0;
+    // float torque_T = - kp * error  - kd * vec;
+    // motor.move(torque_T);
+    // Serial.println(error*RAD_TO_DEG);
   }
-  else if(error2 < angle_dead_zone2 && check){
-    if(ot){
-    motor.P_angle.P = 60;
-    motor.P_angle.reset();
-    motor.PID_velocity.reset();
-    motor.controller = MotionControlType::angle;
-    ot = false;
-    }
-    motor.move(target_angle2);
-    Serial.println(required_torque_input);    
-  }
+  // else if(fabs(error2) < angle_dead_zone2 && check){
+  //   motor.controller = MotionControlType::torque;
+  //   float torque_T = - 50 * error2  - kd * vec;
+  //   motor.move(torque_T);
+  //   Serial.println(error*RAD_TO_DEG);    
+  // }
   else {
-    ot = true;
-      angle_dead_zone = 1.5 * PI / 180.0;
+      angle_dead_zone = 1 * PI / 180.0;
       check = false;
       Serial.println(motor.shaft_velocity);    
       if(fabs(motor.shaft_velocity) < 0.05 ){
@@ -252,6 +278,7 @@ void loop() {
       motor.controller = MotionControlType::torque;
       motor.move(0);
   }
+
 
   delayMicroseconds(1000);
 }

@@ -2,7 +2,7 @@
 #include <SPI.h>
 
 /* DEFINE LINE ----------------------------------------- */
-#define PID_P 100
+#define PID_P 140
 #define PID_I 0.1
 #define PID_D 0.1
 #define FOC_PID_OUTPUT_RAMP 10000
@@ -28,7 +28,7 @@ MagneticSensorSPI sensor = MagneticSensorSPI(AS5048_SPI, PIN_SPI_CS);
 
 // ===== Tham số haptic/detent =====
 const float detent_step_rad = radians(10);   // khoảng cách giữa các vị trí cố định (10°)
-float breakaway_angle_rad = radians(0.2); // Ngưỡng góc để "bẻ gãy" lực cản (2.5°)
+float breakaway_angle_rad = radians(0.15); // Ngưỡng góc để "bẻ gãy" lực cản (2.5°)
 const float detent_hysteresis = radians(3); // Ngưỡng góc để "bẻ gãy" lực cản (2.5°)
 const float dead_angle_rad = radians(1.5); // Ngưỡng góc để "bẻ gãy" lực cản (2.5°)
 // float kp = 8000.0f;                      // Độ cứng của "bức tường" cản
@@ -37,7 +37,7 @@ const float dead_angle_rad = radians(1.5); // Ngưỡng góc để "bẻ gãy" l
 // float kd = 0.32f;                       // Giảm chấn để ổn định
 float kp = 17600.0f;                      // Độ cứng của "bức tường" cản
 float kd = 1.0f;                       // Giảm chấn để ổn định
-float ki = 0.0015f;                       // Giảm chấn để ổn định
+float ki = 0.05f;                       // Giảm chấn để ổn định
 const float click_strength = 200.0f;           // biên độ xung “click”
 const uint8_t click_ms = 1;                  // thời gian mỗi nửa xung (ms)
 
@@ -108,31 +108,40 @@ void setup() {
   motor.useMonitoring(Serial);
   motor.loopFOC();
   float old_angle = motor.shaft_angle;
+  int countt = 0;
   while(1){
     for(int i = 0 ; i < 40; i++){
       motor.loopFOC();
-      motor.move(6);
+      motor.move(7);
       delay(1);
     }
     //Serial.println((motor.shaft_angle - old_angle)*RAD_TO_DEG);
     if(fabs(motor.shaft_angle - old_angle) < 0.5*DEG_TO_RAD){
-      max_position = motor.shaft_angle;
-      //Serial.println(motor.shaft_angle * RAD_TO_DEG);
-      break;
+      countt++;
+      if(countt > 20){
+        max_position = motor.shaft_angle;
+        //Serial.println(motor.shaft_angle * RAD_TO_DEG);
+        break;
+      }
+
     }
     old_angle = motor.shaft_angle; 
   }
+  countt = 0;
   while(1){
     for(int i = 0 ; i < 40; i++){
       motor.loopFOC();
-      motor.move(-6);
+      motor.move(-7);
       delay(1);
     }
     //Serial.println((motor.shaft_angle - old_angle)*RAD_TO_DEG);
     if(fabs(motor.shaft_angle - old_angle) < 0.5*DEG_TO_RAD){
-      //Serial.println(motor.shaft_angle * RAD_TO_DEG);
-      min_position = motor.shaft_angle;
-      break;
+      countt++;
+      if(countt > 20){
+        min_position = motor.shaft_angle;
+        //Serial.println(motor.shaft_angle * RAD_TO_DEG);
+        break;
+      }
     }
     old_angle = motor.shaft_angle; 
   }
@@ -146,12 +155,12 @@ void setup() {
     float vec = motor.shaft_velocity;
     float error =  angle - current_detent_center;
     torque_T = - (error * PID_P + PID_D * vec);
-    if (fabs(torque_T) > 5) {
-      torque_T = torque_T > 0 ? 5 : -5;
+    if (fabs(torque_T) > 6) {
+      torque_T = torque_T > 0 ? 6 : -6;
     }
     motor.move(torque_T);
     if(fabs(error*RAD_TO_DEG) < 1.5){count++;}
-    if(count > 10) {break;}
+    if(count > 50) {break;}
     Serial.print(torque_T);Serial.print(" - ");Serial.println(error*RAD_TO_DEG);
     delay(1);
   }
@@ -180,9 +189,9 @@ void loop() {
   {
     //float i = ki*total_error;
     torque_T = - kp * error * error * (error > 0 ? 1 : -1) - kd * motor.shaft_velocity + ki*total_error;
-    Serial.print(torque_T);Serial.print(" - ");Serial.print(ki*total_error);Serial.print(" - ");Serial.println(error,5);
-    if(torque_T < 1.5 && torque_T > -1.5) {total_error += torque_T;}
-    else if(fabs(error) < breakaway_angle_rad){total_error = 0; torque_T = 0;}
+    Serial.print(torque_T);Serial.print(" - ");Serial.print(ki*total_error);Serial.print(" - ");Serial.println(error * RAD_TO_DEG);
+    if(torque_T < 2 && torque_T > -2) {total_error += torque_T;}
+    if(fabs(error) < breakaway_angle_rad){total_error = 0; torque_T = 0;}
   }
 
   if( fabs(error) > dead_angle_rad ){
